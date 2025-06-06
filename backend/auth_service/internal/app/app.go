@@ -36,7 +36,7 @@ func Run() {
 	server.POST("/login", authHandler.Login)
 	server.POST("/register", authHandler.Register)
 
-	if err := server.Run(":8090"); err != nil {
+	if err := server.Run(":8080"); err != nil {
 		log.Fatal(err)
 	}
 }
