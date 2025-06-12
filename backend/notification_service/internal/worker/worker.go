@@ -40,58 +40,104 @@ func (w *Worker) Run() {
 			task, err := w.service.GetNearTask(w.ctx)
 			if err != nil {
 				if err.Error() == "redis: nil" {
-					log.Println("Нет задач. Ожидаем сигнал...")
-					select {
-					case <-w.wakeup:
-						log.Println("Проснулся по сигналу")
-						continue
-					case <-w.ctx.Done():
-						log.Println("Worker exit while waiting")
-						return
-					}
+					//ожидание сигнала
+					w.waitForSignal()
+					continue
 				}
 				log.Printf("Ошибка при получении задачи: %v", err)
 				time.Sleep(time.Second)
 				continue
 			}
-			//если прилетел пустой id выводим ошибку
-			if task.ID == "" {
-				log.Println("Получена пустая задача. Ждем сигнал...")
-				select {
-				case <-w.wakeup:
-				case <-w.ctx.Done():
-					return
-				}
+			//проверка на пустую таску
+			if !w.validateTask(task) {
 				continue
 			}
-			//вычисляем время до наступления уведомления
-			duration := time.Until(task.EventTime)
-			// если время уже вышло отправляем ошибку
-			if duration <= 0 {
-				log.Printf("Задача [%s] уже просрочена или устарела", task.Title)
 
-				err := w.service.DeleteTask(w.ctx, task.ID)
-				if err != nil {
-					log.Printf("Ошибка удаления просроченной задачи: %v", err)
-				}
+			duration := time.Until(task.EventTime)
+			if duration <= 0 {
+				// проверка на прошедшую задачу
+				w.handleOverdueTask(task)
 				continue
 			}
 
 			log.Printf("Следующая задача [%s] через %v", task.Title, duration)
-			//таймер для отправки задачи в нужное время
-			timer := time.NewTimer(duration)
-			select {
-			case <-w.ctx.Done():
-				log.Println("Worker stopped")
-				timer.Stop()
+			//ожидание отправления таски
+			w.waitForTaskTime(task)
+		}
+	}
+}
+
+// validateTask - проверяет валидность задачи
+func (w *Worker) validateTask(task entity.Task) bool {
+	if task.ID == "" {
+		log.Println("Получена пустая задача. Ждем сигнал...")
+		select {
+		case <-w.wakeup:
+		case <-w.ctx.Done():
+		}
+		return false
+	}
+	return true
+}
+
+// handleOverdueTask - обрабатывает просроченную задачу
+func (w *Worker) handleOverdueTask(task entity.Task) {
+	log.Printf("Задача [%s] уже просрочена или устарела", task.Title)
+	if err := w.service.DeleteTask(w.ctx, task.ID); err != nil {
+		log.Printf("Ошибка удаления просроченной задачи: %v", err)
+	}
+}
+
+// waitForSignal - ожидание сигнала пробуждения
+func (w *Worker) waitForSignal() {
+	log.Println("Нет задач. Ожидаем сигнал...")
+	select {
+	case <-w.wakeup:
+		log.Println("Проснулся по сигналу")
+	case <-w.ctx.Done():
+		log.Println("Worker exit while waiting")
+	}
+}
+
+// waitForTaskTime - ожидание времени выполнения задачи
+func (w *Worker) waitForTaskTime(task entity.Task) {
+	timer := time.NewTimer(time.Until(task.EventTime))
+	select {
+	case <-w.ctx.Done():
+		log.Println("Worker stopped")
+		timer.Stop()
+		return
+	case <-timer.C:
+		log.Printf("Время задачи [%s] пришло", task.Title)
+		w.sendNotification(task, "Время задачи пришло")
+		w.processAllDueTasks()
+	case <-w.wakeup:
+		log.Println("Получен сигнал до наступления времени задачи")
+		timer.Stop()
+	}
+}
+
+// processAllDueTasks - обрабатывает все задачи, которые должны быть отправлены сейчас
+func (w *Worker) processAllDueTasks() {
+	for {
+		task, err := w.service.GetNearTask(w.ctx)
+		if err != nil {
+			if err.Error() == "redis: nil" {
 				return
-			case <-timer.C:
-				log.Printf("Время задачи [%s] пришло", task.Title)
-				w.sendNotification(task, "Время задачи пришло")
-			case <-w.wakeup:
-				log.Println("Получен сигнал до наступления времени задачи")
-				timer.Stop()
 			}
+			log.Printf("Ошибка при получении следующей задачи: %v", err)
+			return
+		}
+
+		if !w.validateTask(task) {
+			return
+		}
+
+		if time.Until(task.EventTime) <= 0 {
+			log.Printf("Отправка следующей задачи [%s]", task.Title)
+			w.sendNotification(task, "Время задачи пришло")
+		} else {
+			return
 		}
 	}
 }
@@ -103,6 +149,7 @@ func (w *Worker) sendNotification(task entity.Task, message string) {
 		"event_time": task.EventTime,
 		"message":    message,
 		"email":      task.Email,
+		"body":       task.Body,
 	}
 
 	if err := w.service.DeleteTask(w.ctx, task.ID); err != nil {
