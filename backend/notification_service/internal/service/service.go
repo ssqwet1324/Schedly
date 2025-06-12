@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
-	"encoding/json"
-	"github.com/google/uuid"
 	"log"
 	"notif_service/internal/entity"
 	"notif_service/internal/kafka"
 	"notif_service/internal/repository"
+
+	"github.com/google/uuid"
 )
 
 type Service struct {
@@ -42,16 +42,6 @@ func (s *Service) CreateTask(ctx context.Context, e entity.Task) (entity.Task, e
 		return entity.Task{}, err
 	}
 
-	data, err := json.Marshal(task)
-	if err != nil {
-		log.Printf("Failed to marshal task: %v", err)
-		return entity.Task{}, err
-	}
-
-	err = s.Producer.WriteMessages(ctx, task.ID, data)
-	if err != nil {
-		log.Printf("Failed to produce message: %v", err)
-	}
 	return *task, nil
 }
 
