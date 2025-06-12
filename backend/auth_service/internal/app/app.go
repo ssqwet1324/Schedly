@@ -8,8 +8,9 @@ import (
 	"auth_service/internal/repository"
 	"auth_service/internal/service"
 	"context"
-	"github.com/gin-gonic/gin"
 	"log"
+
+	"github.com/gin-gonic/gin"
 )
 
 func Run() {
@@ -20,6 +21,7 @@ func Run() {
 		log.Fatal(err)
 	}
 
+	server.Use(pkg.CORSMiddleware())
 	server.Use(gin.Recovery(), pkg.Logger())
 
 	repo := repository.NewRepository(cfg)
@@ -36,7 +38,7 @@ func Run() {
 	server.POST("/login", authHandler.Login)
 	server.POST("/register", authHandler.Register)
 
-	if err := server.Run(":8080"); err != nil {
+	if err := server.Run(":8090"); err != nil {
 		log.Fatal(err)
 	}
 }
