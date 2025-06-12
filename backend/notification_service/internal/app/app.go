@@ -2,17 +2,22 @@ package app
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
 	"log"
 	"notif_service/internal/handler"
 	"notif_service/internal/kafka"
+	"notif_service/internal/pkg"
 	"notif_service/internal/repository"
 	service "notif_service/internal/service"
 	"notif_service/internal/worker"
+
+	"github.com/gin-gonic/gin"
 )
 
 func Run() {
 	server := gin.Default()
+
+	// Подключаем CORS middleware
+	server.Use(pkg.CORSMiddleware())
 
 	repo := repository.NewRedisRepository("redis:6379", "", 0)
 
