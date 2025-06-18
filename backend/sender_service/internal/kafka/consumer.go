@@ -3,7 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"github.com/segmentio/kafka-go"
 	"log"
 	"sender_service/internal/email"
@@ -14,10 +14,6 @@ import (
 type Consumer struct {
 	reader       *kafka.Reader
 	emailService *email.EmailService
-}
-
-type Reader interface {
-	SendEmail(ctx context.Context, message entity.EmailMessage) error
 }
 
 func NewConsumer(brokers []string, topic, groupID string, service *email.EmailService) *Consumer {
@@ -34,52 +30,51 @@ func NewConsumer(brokers []string, topic, groupID string, service *email.EmailSe
 
 // StartConsumer - запуск consumer
 func (c *Consumer) StartConsumer(ctx context.Context) error {
-	defer func(reader *kafka.Reader) {
-		err := reader.Close()
-		if err != nil {
+	defer func() {
+		if err := c.reader.Close(); err != nil {
 			log.Println("Ошибка закрытия Kafka reader:", err)
 		}
-	}(c.reader)
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Consumer stopped")
-			_ = c.reader.Close()
-			return nil // завершаем корректно
+			return nil
 		default:
-			readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			msg, err := c.reader.ReadMessage(readCtx)
-			cancel()
-
+			msg, err := c.readMessage(ctx)
 			if err != nil {
-				// Убираем флуд: логируем только при необходимости
-				if !errors.Is(err, context.DeadlineExceeded) {
-					log.Printf("Ошибка чтения сообщения: %v", err)
-				}
 				continue
 			}
 
-			log.Println("Consumer Read Message: ", string(msg.Value))
-
-			var data entity.EmailMessage
-			err = json.Unmarshal(msg.Value, &data)
-			if err != nil {
-				log.Printf("Ошибка распарсивания данных: %v", err)
-				continue
-			}
-
-			err = c.emailService.SendEmail(data)
-			if err != nil {
-				log.Printf("Ошибка отправки email: %v", err)
-				continue
-			}
-
-			err = c.reader.CommitMessages(ctx, msg)
-			if err != nil {
-				log.Println("Ошибка коммита сообщения:", err)
-				continue
+			if err := c.processMessage(ctx, msg); err != nil {
+				log.Printf("Ошибка обработки сообщения: %v", err)
 			}
 		}
 	}
+}
+
+// readMessage() - чтение сообщение в кафке
+func (c *Consumer) readMessage(ctx context.Context) (kafka.Message, error) {
+	readCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	return c.reader.ReadMessage(readCtx)
+}
+
+// processMessage() - отправка сообщения на почту
+func (c *Consumer) processMessage(ctx context.Context, msg kafka.Message) error {
+	var data entity.EmailMessage
+	if err := json.Unmarshal(msg.Value, &data); err != nil {
+		return fmt.Errorf("ошибка парсинга: %w", err)
+	}
+
+	if err := c.emailService.SendEmail(data); err != nil {
+		return fmt.Errorf("ошибка отправки email: %w", err)
+	}
+
+	if err := c.reader.CommitMessages(ctx, msg); err != nil {
+		return fmt.Errorf("ошибка коммита: %w", err)
+	}
+
+	return nil
 }

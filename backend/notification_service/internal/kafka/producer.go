@@ -13,11 +13,11 @@ type Producer struct {
 
 func NewProducer(brokers []string, topic string) *Producer {
 	return &Producer{
-		writer: kafka.NewWriter(kafka.WriterConfig{
-			Brokers:  brokers,
+		writer: &kafka.Writer{
+			Addr:     kafka.TCP(brokers...),
 			Topic:    topic,
 			Balancer: &kafka.LeastBytes{},
-		}),
+		},
 	}
 }
 
@@ -28,11 +28,11 @@ func (p *Producer) WriteMessages(ctx context.Context, key string, value []byte) 
 		Value: value,
 	}
 
-	ctx, cancelFunc := context.WithTimeout(ctx, 5*time.Second)
+	ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, 5*time.Second)
 
 	defer cancelFunc()
 
-	err := p.writer.WriteMessages(ctx, message)
+	err := p.writer.WriteMessages(ctxWithTimeout, message)
 
 	if err != nil {
 		return fmt.Errorf("error writing message: %w", err)
